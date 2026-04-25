@@ -37,6 +37,11 @@ public class StringUtils {
     }
 
     @NotNull
+    public static java.util.List<String> color(@NotNull java.util.List<String> input) {
+        return input.stream().map(StringUtils::color).collect(java.util.stream.Collectors.toList());
+    }
+
+    @NotNull
     public static String replacePlaceholdersAndArguments(@NotNull String input, final @Nullable Map<String, String> arguments,
                                                          final @Nullable Player player,
                                                          final boolean parsePlaceholdersInsideArguments,
