@@ -62,6 +62,8 @@ public class PlayerListener extends Listener {
     public void onLeave(PlayerQuitEvent event) {
         Player player = event.getPlayer();
 
+        plugin.getMenuCache().invalidate(player.getUniqueId());
+
         if (Menu.isInMenu(player)) {
             Menu.closeMenu(plugin, player, false);
         }

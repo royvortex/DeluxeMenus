@@ -3,6 +3,7 @@ package com.extendedclip.deluxemenus;
 import com.extendedclip.deluxemenus.cache.SimpleCache;
 import com.extendedclip.deluxemenus.command.DeluxeMenusCommand;
 import com.extendedclip.deluxemenus.config.DeluxeMenusConfig;
+import com.extendedclip.deluxemenus.cache.MenuCache;
 import com.extendedclip.deluxemenus.config.GeneralConfig;
 import com.extendedclip.deluxemenus.dupe.DupeFixer;
 import com.extendedclip.deluxemenus.dupe.MenuItemMarker;
@@ -66,6 +67,7 @@ public class DeluxeMenus extends JavaPlugin {
 
     private final GeneralConfig generalConfig = new GeneralConfig(this);
     private DeluxeMenusConfig menuConfig;
+    private MenuCache menuCache;
 
     @NotNull
     private final TaskScheduler scheduler = UniversalScheduler.getScheduler(this);
@@ -101,6 +103,7 @@ public class DeluxeMenus extends JavaPlugin {
 
         hookIntoVault();
         setUpItemHooks();
+        this.menuCache = new MenuCache();
 
         this.menuConfig = new DeluxeMenusConfig(this);
         if (this.menuConfig.loadDefConfig()) {
@@ -218,6 +221,7 @@ public class DeluxeMenus extends JavaPlugin {
 
     public void clearCaches() {
         itemHooks.values().stream().filter(Objects::nonNull).filter(hook -> hook instanceof SimpleCache).map(hook -> (SimpleCache) hook).forEach(SimpleCache::clearCache);
+        if (menuCache != null) menuCache.clearCache();
     }
 
     public void reload() {
@@ -315,6 +319,10 @@ public class DeluxeMenus extends JavaPlugin {
         if (Bukkit.getPluginManager().isPluginEnabled("SimpleItemGenerator")) {
             this.itemHooks.put("simpleitemgenerator", new SimpleItemGeneratorHook(this));
         }
+    }
+
+    public @NotNull MenuCache getMenuCache() {
+        return menuCache;
     }
 
     private void setUpBungeeCordMessaging() {

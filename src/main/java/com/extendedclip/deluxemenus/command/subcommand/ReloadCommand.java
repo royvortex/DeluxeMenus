@@ -42,6 +42,7 @@ public class ReloadCommand extends SubCommand {
                 return;
             }
 
+            plugin.getMenuCache().invalidate(arguments.get(0));
             Menu.unload(plugin, arguments.get(0));
 
             if (plugin.getConfiguration().loadGUIMenu(arguments.get(0))) {
