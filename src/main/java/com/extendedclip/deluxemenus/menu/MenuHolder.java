@@ -123,90 +123,35 @@ public class MenuHolder implements InventoryHolder {
     }
 
     public void refreshMenu() {
-
         Optional<Menu> optionalMenu = getMenu();
-        if (optionalMenu.isEmpty()) {
-            return;
-        }
-
+        if (optionalMenu.isEmpty()) return;
         Menu menu = optionalMenu.get();
-
-        if (menu.getMenuItems().isEmpty()) {
-            return;
-        }
 
         setUpdating(true);
 
         scheduler.runTaskAsynchronously(() -> {
+            MenuSnapshot snapshot = menu.computeSnapshot(this);
 
-            final Set<MenuItem> active = new HashSet<>();
-            final Set<Integer> slotsToClear = new HashSet<>();
-
-            for (int i = 0; i < getInventory().getSize(); i++) {
-                TreeMap<Integer, MenuItem> e = menu.getMenuItems().get(i);
-
-                if (e == null) {
-                    slotsToClear.add(i);
-                    continue;
-                }
-
-                boolean matched = false;
-                for (MenuItem item : e.values()) {
-
-                    if (item.options().viewRequirements().isPresent()) {
-
-                        if (item.options().viewRequirements().get().evaluate(this)) {
-                            matched = true;
-                            active.add(item);
-                            break;
-                        }
-                    } else {
-                        matched = true;
-                        active.add(item);
-                        break;
-                    }
-                }
-
-                if (!matched) {
-                    slotsToClear.add(i);
-                }
-            }
-
-            if (active.isEmpty()) {
+            if (snapshot == null) {
                 scheduler.runTask(viewer, () -> Menu.closeMenu(plugin, viewer, true));
                 return;
             }
 
             scheduler.runTask(viewer, () -> {
+                menu.renderSnapshotToInventory(this, snapshot, getInventory());
 
-                for (int slot : slotsToClear) {
-                    getInventory().setItem(slot, null);
+                Set<MenuItem> active = new HashSet<>();
+                for (MenuItemData data : snapshot.getItems()) {
+                    active.add(menu.getMenuItems().get(data.getSlot()).get(data.getPriority()));
                 }
-
-                boolean update = false;
-
-                for (MenuItem item : active) {
-
-                    ItemStack iStack = item.getItemStack(this);
-
-                    int slot = item.options().slot();
-
-                    if (slot >= menu.options().size()) {
-                        continue;
-                    }
-
-                    if (item.options().updatePlaceholders()) {
-                        update = true;
-                    }
-
-                    getInventory().setItem(item.options().slot(), iStack);
-                }
-
                 setActiveItems(active);
 
-                if (update && updateTask == null) {
+                boolean hasUpdatingItems = snapshot.getItems().stream()
+                        .anyMatch(data -> menu.getMenuItems().get(data.getSlot()).get(data.getPriority()).options().updatePlaceholders());
+
+                if (hasUpdatingItems && updateTask == null) {
                     startUpdatePlaceholdersTask();
-                } else if (!update && updateTask != null) {
+                } else if (!hasUpdatingItems && updateTask != null) {
                     stopPlaceholderUpdate();
                 }
 
@@ -268,59 +213,37 @@ public class MenuHolder implements InventoryHolder {
         updateTask = scheduler.runTaskTimer(
                 viewer,
                 () -> {
+                    if (updating) return;
 
-                    if (updating) {
-                        return;
-                    }
+                    Set<MenuItem> itemsToUpdate = getActiveItems();
+                    if (itemsToUpdate == null || itemsToUpdate.isEmpty()) return;
 
-                    Set<MenuItem> items = getActiveItems();
-
-                    if (items == null) {
-                        return;
-                    }
-
-                    for (MenuItem item : items) {
-
-                        if (item.options().updatePlaceholders()) {
-
-                            ItemStack i = inventory.getItem(item.options().slot());
-
-                            if (i == null) {
-                                continue;
+                    scheduler.runTaskAsynchronously(() -> {
+                        java.util.List<MenuItemData> updatedData = new java.util.ArrayList<>();
+                        for (MenuItem item : itemsToUpdate) {
+                            if (item.options().updatePlaceholders()) {
+                                updatedData.add(item.computeData(this));
                             }
-
-                            int amt = i.getAmount();
-
-                            if (item.options().dynamicAmount().isPresent()) {
-                                try {
-                                    amt = Integer.parseInt(setPlaceholdersAndArguments(item.options().dynamicAmount().get()));
-                                    if (amt <= 0) {
-                                        amt = 1;
-                                    }
-                                } catch (Exception exception) {
-                                    plugin.printStacktrace(
-                                            "Something went wrong while updating item in slot " + item.options().slot() +
-                                                    ". Invalid dynamic amount: " + setPlaceholdersAndArguments(item.options().dynamicAmount().get()),
-                                            exception
-                                    );
-                                }
-                            }
-
-                            ItemMeta meta = i.getItemMeta();
-
-                            if (item.options().displayNameHasPlaceholders() && item.options().displayName().isPresent()) {
-                                meta.setDisplayName(StringUtils.color(setPlaceholdersAndArguments(item.options().displayName().get())));
-                            }
-
-                            if (item.options().loreHasPlaceholders()) {
-                                meta.setLore(item.getMenuItemLore(getHolder(), item.options().lore()));
-                            }
-
-                            i.setItemMeta(meta);
-                            i.setAmount(amt);
                         }
-                    }
 
+                        if (updatedData.isEmpty()) return;
+
+                        scheduler.runTask(viewer, () -> {
+                            for (MenuItemData data : updatedData) {
+                                MenuItem item = itemsToUpdate.stream()
+                                        .filter(i -> i.options().slot() == data.getSlot())
+                                        .findFirst()
+                                        .orElse(null);
+
+                                if (item == null) continue;
+
+                                ItemStack i = inventory.getItem(data.getSlot());
+                                if (i == null) continue;
+
+                                item.applyDataToItemStack(data, i, viewer);
+                            }
+                        });
+                    });
                 }, initialDelay, period
         );
     }
