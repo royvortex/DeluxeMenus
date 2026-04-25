@@ -304,117 +304,114 @@ public class Menu {
             return;
         }
 
+        // Check Cache
+        MenuSnapshot cachedSnapshot = plugin.getMenuCache().get(viewer.getUniqueId(), this.options.name(), args);
+        if (cachedSnapshot != null) {
+            renderSnapshot(holder, cachedSnapshot, viewer);
+            return;
+        }
+
         scheduler.runTaskAsynchronously(() -> {
+            MenuSnapshot snapshot = computeSnapshot(holder);
+            if (snapshot == null) return;
 
-            Set<MenuItem> activeItems = new HashSet<>();
+            // Check if any items need placeholder updates
+            boolean updatePlaceholders = snapshot.getItems().stream()
+                    .anyMatch(data -> items.get(data.getSlot()).get(data.getPriority()).options().updatePlaceholders());
 
-            for (Entry<Integer, TreeMap<Integer, MenuItem>> entry : items.entrySet()) {
+            // Put in Cache
+            plugin.getMenuCache().put(viewer.getUniqueId(), this.options.name(), args, snapshot);
 
-                for (MenuItem item : entry.getValue().values()) {
+            final boolean finalUpdatePlaceholders = updatePlaceholders;
 
-                    int slot = item.options().slot();
+            // Switch to Main Thread for Rendering
+            scheduler.runTask(viewer, () -> renderSnapshot(holder, snapshot, viewer, finalUpdatePlaceholders));
+        });
+    }
 
-                    if (slot >= this.options.size()) {
-                        plugin.debug(
-                                DebugLevel.HIGHEST,
-                                Level.WARNING,
-                                "Item set to slot " + slot + " for menu: " + this.options.name() + " exceeds the inventory size!",
-                                "This item will not be added to the menu!"
-                        );
-                        continue;
-                    }
+    public @Nullable MenuSnapshot computeSnapshot(@NotNull final MenuHolder holder) {
+        List<MenuItemData> itemDataList = new ArrayList<>();
 
-                    if (item.options().viewRequirements().isPresent()) {
-
-                        if (item.options().viewRequirements().get().evaluate(holder)) {
-
-                            activeItems.add(item);
-                            break;
-                        }
-                    } else {
-
-                        activeItems.add(item);
-                        break;
-                    }
-                }
-            }
-
-            if (activeItems.isEmpty()) {
-                return;
-            }
-
-            holder.setMenuName(this.options.name());
-            holder.setActiveItems(activeItems);
-
-            this.options.openHandler().ifPresent(h -> h.onClick(holder));
-
-            String title = StringUtils.color(holder.setPlaceholdersAndArguments(this.options.title()));
-
-            Inventory inventory;
-
-            if (this.options.type() != InventoryType.CHEST) {
-                inventory = Bukkit.createInventory(holder, this.options.type(), title);
-            } else {
-                inventory = Bukkit.createInventory(holder, this.options.size(), title);
-            }
-
-            holder.setInventory(inventory);
-
-            boolean update = false;
-
-            for (MenuItem item : activeItems) {
-
-                ItemStack iStack = item.getItemStack(holder);
-
-                if (iStack == null) {
-                    continue;
-                }
-
-                iStack = plugin.getMenuItemMarker().mark(iStack);
-
+        for (Entry<Integer, TreeMap<Integer, MenuItem>> entry : items.entrySet()) {
+            for (MenuItem item : entry.getValue().values()) {
                 int slot = item.options().slot();
 
                 if (slot >= this.options.size()) {
-                    plugin.debug(
-                            DebugLevel.HIGHEST,
-                            Level.WARNING,
-                            "Item set to slot " + slot + " for menu: " + this.options.name() + " exceeds the inventory size!",
-                            "This item will not be added to the menu!"
-                    );
                     continue;
                 }
 
-                if (item.options().updatePlaceholders()) {
-                    update = true;
+                if (item.options().viewRequirements().isPresent()) {
+                    if (item.options().viewRequirements().get().evaluate(holder)) {
+                        itemDataList.add(item.computeData(holder));
+                        break;
+                    }
+                } else {
+                    itemDataList.add(item.computeData(holder));
+                    break;
                 }
-
-                inventory.setItem(item.options().slot(), iStack);
             }
+        }
 
-            final boolean updatePlaceholders = update;
+        if (itemDataList.isEmpty()) {
+            return null;
+        }
 
-            scheduler.runTask(viewer, () -> {
-                if (options.refresh()) {
-                    holder.startRefreshTask();
-                }
+        String title = StringUtils.color(holder.setPlaceholdersAndArguments(this.options.title()));
+        return new MenuSnapshot(title, this.options.size(), this.options.type(), itemDataList);
+    }
 
-                if (isInMenu(holder.getViewer())) {
-                    closeMenu(plugin, holder.getViewer(), false);
-                }
+    private void renderSnapshot(final @NotNull MenuHolder holder, final @NotNull MenuSnapshot snapshot, final @NotNull Player viewer) {
+        renderSnapshot(holder, snapshot, viewer, false);
+    }
 
-                viewer.openInventory(inventory);
-                menuHolders.add(holder);
+    private void renderSnapshot(final @NotNull MenuHolder holder, final @NotNull MenuSnapshot snapshot, final @NotNull Player viewer, final boolean updatePlaceholders) {
+        holder.setMenuName(this.options.name());
 
-                if (updatePlaceholders) {
-                    holder.startUpdatePlaceholdersTask();
-                }
-            });
+        this.options.openHandler().ifPresent(h -> h.onClick(holder));
 
-            scheduler.runTask(viewer, () -> {
-                DeluxeMenusOpenMenuEvent openEvent = new DeluxeMenusOpenMenuEvent(viewer, holder);
-                Bukkit.getPluginManager().callEvent(openEvent);
-            });
-        });
+        Inventory inventory;
+        if (snapshot.getType() != InventoryType.CHEST) {
+            inventory = Bukkit.createInventory(holder, snapshot.getType(), snapshot.getTitle());
+        } else {
+            inventory = Bukkit.createInventory(holder, snapshot.getSize(), snapshot.getTitle());
+        }
+        holder.setInventory(inventory);
+
+        renderSnapshotToInventory(holder, snapshot, inventory);
+
+        if (options.refresh()) {
+            holder.startRefreshTask();
+        }
+
+        if (isInMenu(holder.getViewer())) {
+            closeMenu(plugin, holder.getViewer(), false);
+        }
+
+        viewer.openInventory(inventory);
+        menuHolders.add(holder);
+
+        if (updatePlaceholders) {
+            holder.startUpdatePlaceholdersTask();
+        }
+
+        DeluxeMenusOpenMenuEvent openEvent = new DeluxeMenusOpenMenuEvent(viewer, holder);
+        Bukkit.getPluginManager().callEvent(openEvent);
+    }
+
+    public void renderSnapshotToInventory(final @NotNull MenuHolder holder, final @NotNull MenuSnapshot snapshot, final @NotNull Inventory inventory) {
+        // Clear inventory first
+        inventory.clear();
+
+        final Player viewer = holder.getViewer();
+        for (MenuItemData data : snapshot.getItems()) {
+            MenuItem item = items.get(data.getSlot()).get(data.getPriority());
+            ItemStack iStack = item.getItemStack(data, viewer);
+
+            if (iStack != null) {
+                iStack = plugin.getMenuItemMarker().mark(iStack);
+                inventory.setItem(data.getSlot(), iStack);
+            }
+        }
     }
 
     public void refreshForAll() {
