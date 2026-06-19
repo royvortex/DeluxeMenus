@@ -305,7 +305,8 @@ public class Menu {
         }
 
         // Check Cache
-        MenuSnapshot cachedSnapshot = plugin.getMenuCache().get(viewer.getUniqueId(), this.options.name(), args);
+        final UUID cacheUuid = this.options.shared() ? null : viewer.getUniqueId();
+        MenuSnapshot cachedSnapshot = plugin.getMenuCache().get(cacheUuid, this.options.name(), args);
         if (cachedSnapshot != null) {
             renderSnapshot(holder, cachedSnapshot, viewer);
             return;
@@ -320,7 +321,7 @@ public class Menu {
                     .anyMatch(data -> items.get(data.getSlot()).get(data.getPriority()).options().updatePlaceholders());
 
             // Put in Cache
-            plugin.getMenuCache().put(viewer.getUniqueId(), this.options.name(), args, snapshot);
+            plugin.getMenuCache().put(cacheUuid, this.options.name(), args, snapshot);
 
             final boolean finalUpdatePlaceholders = updatePlaceholders;
 

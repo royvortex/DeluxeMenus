@@ -1,5 +1,6 @@
 package com.extendedclip.deluxemenus.cache;
 
+import com.extendedclip.deluxemenus.menu.MenuItemData;
 import com.extendedclip.deluxemenus.menu.MenuSnapshot;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -14,9 +15,22 @@ import java.util.concurrent.TimeUnit;
 public class MenuCache implements SimpleCache {
 
     private final Cache<CacheKey, MenuSnapshot> cache = CacheBuilder.newBuilder()
-            .maximumSize(5000) // Cap at 5000 snapshots to prevent memory issues
-            .expireAfterWrite(1, TimeUnit.MINUTES) // TTL of 1 minute
+            .maximumSize(5000)
+            .expireAfterWrite(1, TimeUnit.MINUTES)
             .build();
+
+    private final Cache<ItemCacheKey, MenuItemData> itemCache = CacheBuilder.newBuilder()
+            .maximumSize(20000) // Individual items take less memory, can cache more
+            .expireAfterWrite(1, TimeUnit.MINUTES)
+            .build();
+
+    public void putItem(UUID playerUuid, String menuName, String itemKey, Map<String, String> args, MenuItemData data) {
+        itemCache.put(new ItemCacheKey(playerUuid, menuName, itemKey, args), data);
+    }
+
+    public MenuItemData getItem(UUID playerUuid, String menuName, String itemKey, Map<String, String> args) {
+        return itemCache.getIfPresent(new ItemCacheKey(playerUuid, menuName, itemKey, args));
+    }
 
     public void put(UUID playerUuid, String menuName, Map<String, String> args, MenuSnapshot snapshot) {
         cache.put(new CacheKey(playerUuid, menuName, args), snapshot);
@@ -28,15 +42,48 @@ public class MenuCache implements SimpleCache {
 
     public void invalidate(UUID playerUuid) {
         cache.asMap().keySet().removeIf(key -> key.playerUuid.equals(playerUuid));
+        itemCache.asMap().keySet().removeIf(key -> key.playerUuid.equals(playerUuid));
     }
 
     public void invalidate(String menuName) {
         cache.asMap().keySet().removeIf(key -> key.menuName.equalsIgnoreCase(menuName));
+        itemCache.asMap().keySet().removeIf(key -> key.menuName.equalsIgnoreCase(menuName));
     }
 
     @Override
     public void clearCache() {
         cache.invalidateAll();
+        itemCache.invalidateAll();
+    }
+
+    private static class ItemCacheKey {
+        private final UUID playerUuid;
+        private final String menuName;
+        private final String itemKey;
+        private final Map<String, String> args;
+
+        public ItemCacheKey(UUID playerUuid, String menuName, String itemKey, Map<String, String> args) {
+            this.playerUuid = playerUuid;
+            this.menuName = menuName;
+            this.itemKey = itemKey;
+            this.args = args != null ? Map.copyOf(args) : Map.of();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ItemCacheKey that = (ItemCacheKey) o;
+            return Objects.equals(playerUuid, that.playerUuid) &&
+                    Objects.equals(menuName.toLowerCase(), that.menuName.toLowerCase()) &&
+                    Objects.equals(itemKey.toLowerCase(), that.itemKey.toLowerCase()) &&
+                    Objects.equals(args, that.args);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(playerUuid, menuName.toLowerCase(), itemKey.toLowerCase(), args);
+        }
     }
 
     private static class CacheKey {

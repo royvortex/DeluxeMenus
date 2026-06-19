@@ -53,6 +53,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 
@@ -64,9 +65,11 @@ public class MenuItem {
 
     private final DeluxeMenus plugin;
     private final MenuItemOptions options;
+    private final String configKey;
 
-    public MenuItem(@NotNull final DeluxeMenus plugin, @NotNull final MenuItemOptions options) {
+    public MenuItem(@NotNull final DeluxeMenus plugin, @NotNull final String configKey, @NotNull final MenuItemOptions options) {
         this.plugin = plugin;
+        this.configKey = configKey;
         this.options = options;
     }
 
@@ -91,6 +94,17 @@ public class MenuItem {
     }
 
     public MenuItemData computeData(@NotNull final MenuHolder holder) {
+        final UUID cacheUuid = this.options.shared() ? null : holder.getViewer().getUniqueId();
+        if (this.options.caching()) {
+            MenuItemData cached = plugin.getMenuCache().getItem(
+                    cacheUuid,
+                    holder.getMenuName(),
+                    this.configKey,
+                    holder.getTypedArgs()
+            );
+            if (cached != null) return cached;
+        }
+
         final Player viewer = holder.getViewer();
 
         String hookName = null;
@@ -210,7 +224,67 @@ public class MenuItem {
             } catch (NumberFormatException ignored) {}
         }
 
-        return new MenuItemData(
+        // NBT Data resolution
+        Map<String, Object> nbtTags = new java.util.HashMap<>();
+        this.options.nbtString().ifPresent(s -> {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) nbtTags.put("s:" + parts[0], holder.setPlaceholdersAndArguments(parts[1]));
+        });
+        this.options.nbtByte().ifPresent(s -> {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("b:" + parts[0], Byte.parseByte(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        });
+        this.options.nbtShort().ifPresent(s -> {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("sh:" + parts[0], Short.parseShort(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        });
+        this.options.nbtInt().ifPresent(s -> {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("i:" + parts[0], Integer.parseInt(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        });
+
+        for (String s : this.options.nbtStrings()) {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) nbtTags.put("s:" + parts[0], holder.setPlaceholdersAndArguments(parts[1]));
+        }
+        for (String s : this.options.nbtBytes()) {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("b:" + parts[0], Byte.parseByte(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        for (String s : this.options.nbtShorts()) {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("sh:" + parts[0], Short.parseShort(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+        for (String s : this.options.nbtInts()) {
+            String[] parts = s.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    nbtTags.put("i:" + parts[0], Integer.parseInt(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+
+        MenuItemData data = new MenuItemData(
                 this.options.slot(),
                 this.options.priority(),
                 material != null ? material : Material.STONE,
@@ -223,7 +297,7 @@ public class MenuItem {
                 this.options.unbreakable(),
                 new ArrayList<>(this.options.itemFlags()),
                 rgbColor,
-                this.options.potionEffects(),
+                new ArrayList<>(this.options.potionEffects()),
                 rarity,
                 hideTooltip,
                 enchantmentGlintOverride,
@@ -232,23 +306,35 @@ public class MenuItem {
                 trimMaterial,
                 trimPattern,
                 lightLevel,
-                Map.of(), // TODO: Support NBT parsing in computeData if needed
+                nbtTags,
                 Optional.ofNullable(hookName),
                 Optional.ofNullable(hookArgs),
                 Optional.ofNullable(base64Data),
                 isPlayerItem,
                 isWaterBottle
         );
+
+        if (this.options.caching()) {
+            plugin.getMenuCache().putItem(
+                    cacheUuid,
+                    holder.getMenuName(),
+                    this.configKey,
+                    holder.getTypedArgs(),
+                    data
+            );
+        }
+
+        return data;
     }
 
-    public void applyDataToItemStack(@NotNull final MenuItemData data, @NotNull final ItemStack itemStack, @NotNull final Player viewer) {
+    public ItemStack applyDataToItemStack(@NotNull final MenuItemData data, @NotNull final ItemStack itemStack, @NotNull final Player viewer) {
         if (itemStack.getType() != data.getMaterial()) {
             itemStack.setType(data.getMaterial());
         }
         itemStack.setAmount(data.getAmount());
 
         ItemMeta meta = itemStack.getItemMeta();
-        if (meta == null) return;
+        if (meta == null) return itemStack;
 
         data.getDisplayName().ifPresent(name -> meta.setDisplayName(StringUtils.color(name)));
         if (!data.getLore().isEmpty()) {
@@ -256,6 +342,26 @@ public class MenuItem {
         }
 
         itemStack.setItemMeta(meta);
+
+        ItemStack result = itemStack;
+        // NBT Support
+        if (NbtProvider.isAvailable() && !data.getNbtTags().isEmpty()) {
+            for (Map.Entry<String, Object> entry : data.getNbtTags().entrySet()) {
+                String keyWithType = entry.getKey();
+                Object value = entry.getValue();
+                
+                if (keyWithType.startsWith("s:")) {
+                    result = NbtProvider.setString(result, keyWithType.substring(2), (String) value);
+                } else if (keyWithType.startsWith("b:")) {
+                    result = NbtProvider.setByte(result, keyWithType.substring(2), (Byte) value);
+                } else if (keyWithType.startsWith("sh:")) {
+                    result = NbtProvider.setShort(result, keyWithType.substring(3), (Short) value);
+                } else if (keyWithType.startsWith("i:")) {
+                    result = NbtProvider.setInt(result, keyWithType.substring(2), (Integer) value);
+                }
+            }
+        }
+        return result;
     }
 
     public ItemStack getItemStack(@NotNull final MenuItemData data, @NotNull final Player viewer) {
@@ -400,10 +506,22 @@ public class MenuItem {
 
         itemStack.setItemMeta(itemMeta);
 
-        // NBT Support (Basic)
-        if (NbtProvider.isAvailable()) {
-            // This is a simplified version of the original NBT logic
-            // In a full implementation, we'd pre-parse NBT strings in computeData
+        // NBT Support
+        if (NbtProvider.isAvailable() && !data.getNbtTags().isEmpty()) {
+            for (Map.Entry<String, Object> entry : data.getNbtTags().entrySet()) {
+                String keyWithType = entry.getKey();
+                Object value = entry.getValue();
+                
+                if (keyWithType.startsWith("s:")) {
+                    itemStack = NbtProvider.setString(itemStack, keyWithType.substring(2), (String) value);
+                } else if (keyWithType.startsWith("b:")) {
+                    itemStack = NbtProvider.setByte(itemStack, keyWithType.substring(2), (Byte) value);
+                } else if (keyWithType.startsWith("sh:")) {
+                    itemStack = NbtProvider.setShort(itemStack, keyWithType.substring(3), (Short) value);
+                } else if (keyWithType.startsWith("i:")) {
+                    itemStack = NbtProvider.setInt(itemStack, keyWithType.substring(2), (Integer) value);
+                }
+            }
         }
 
         return itemStack;

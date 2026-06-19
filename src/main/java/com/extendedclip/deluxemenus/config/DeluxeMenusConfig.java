@@ -565,6 +565,7 @@ public class DeluxeMenusConfig {
         builder.parsePlaceholdersInArguments(c.getBoolean(pre + "arguments_support_placeholders", false));
         builder.parsePlaceholdersAfterArguments(c.getBoolean(pre + "parse_placeholders_after_arguments", false));
         builder.enableBypassPerm(c.getBoolean(pre + "enable_open_requirements_bypass_permissions", false));
+        builder.shared(c.getBoolean(pre + "shared", false));
 
         // Don't need to register the menu since it's done in the constructor
         new Menu(plugin, builder.build(), items, path);
@@ -640,7 +641,9 @@ public class DeluxeMenusConfig {
                     .enchantmentGlintOverride(c.getString(currentPath + "enchantment_glint_override", null))
                     .rarity(c.getString(currentPath + "rarity", null))
                     .tooltipStyle(c.getString(currentPath + "tooltip_style", null))
-                    .itemModel(c.getString(currentPath + "item_model", null));
+                    .itemModel(c.getString(currentPath + "item_model", null))
+                    .caching(c.getBoolean(currentPath + "caching", true))
+                    .shared(c.getBoolean(currentPath + "shared", false));
 
             if (c.contains(currentPath + "model_data_component") && c.isConfigurationSection(currentPath + "model_data_component")) {
                 final ConfigurationSection modelDataComponent = c.getConfigurationSection(currentPath + "model_data_component");
@@ -826,7 +829,7 @@ public class DeluxeMenusConfig {
                 slots.add(c.getInt(currentPath + "slot", 0));
             }
 
-            final MenuItem menuItem = new MenuItem(plugin, builder.build());
+            final MenuItem menuItem = new MenuItem(plugin, key, builder.build());
 
             for (int slot : slots) {
                 TreeMap<Integer, MenuItem> slotPriorityMap;
@@ -836,7 +839,7 @@ public class DeluxeMenusConfig {
                 } else {
                     slotPriorityMap = menuItems.get(slot);
                 }
-                slotPriorityMap.put(menuItem.options().priority(), new MenuItem(plugin, menuItem.options().asBuilder().slot(slot).build()));
+                slotPriorityMap.put(menuItem.options().priority(), new MenuItem(plugin, key, menuItem.options().asBuilder().slot(slot).build()));
             }
         }
         return menuItems;

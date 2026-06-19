@@ -67,6 +67,8 @@ public class MenuItemOptions {
     private final int slot;
     private final int priority;
     private final boolean updatePlaceholders;
+    private final boolean caching;
+    private final boolean shared;
 
     private final ClickHandler clickHandler;
     private final ClickHandler leftClickHandler;
@@ -123,6 +125,8 @@ public class MenuItemOptions {
         this.slot = builder.slot;
         this.priority = builder.priority;
         this.updatePlaceholders = builder.updatePlaceholders;
+        this.caching = builder.caching;
+        this.shared = builder.shared;
         this.clickHandler = builder.clickHandler;
         this.leftClickHandler = builder.leftClickHandler;
         this.rightClickHandler = builder.rightClickHandler;
@@ -302,6 +306,14 @@ public class MenuItemOptions {
         return updatePlaceholders;
     }
 
+    public boolean caching() {
+        return caching;
+    }
+
+    public boolean shared() {
+        return shared;
+    }
+
     public @NotNull Optional<ClickHandler> clickHandler() {
         return Optional.ofNullable(clickHandler);
     }
@@ -393,6 +405,8 @@ public class MenuItemOptions {
                 .slot(this.slot)
                 .priority(this.priority)
                 .updatePlaceholders(this.updatePlaceholders)
+                .caching(this.caching)
+                .shared(this.shared)
                 .clickHandler(this.clickHandler)
                 .leftClickHandler(this.leftClickHandler)
                 .rightClickHandler(this.rightClickHandler)
@@ -456,6 +470,8 @@ public class MenuItemOptions {
         private int slot;
         private int priority;
         private boolean updatePlaceholders;
+        private boolean caching = true;
+        private boolean shared = false;
 
         private ClickHandler clickHandler;
         private ClickHandler leftClickHandler;
@@ -684,6 +700,16 @@ public class MenuItemOptions {
 
         public MenuItemOptionsBuilder updatePlaceholders(final boolean updatePlaceholders) {
             this.updatePlaceholders = updatePlaceholders;
+            return this;
+        }
+
+        public MenuItemOptionsBuilder caching(final boolean caching) {
+            this.caching = caching;
+            return this;
+        }
+
+        public MenuItemOptionsBuilder shared(final boolean shared) {
+            this.shared = shared;
             return this;
         }
 

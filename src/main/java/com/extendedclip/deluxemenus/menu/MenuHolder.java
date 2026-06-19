@@ -240,7 +240,10 @@ public class MenuHolder implements InventoryHolder {
                                 ItemStack i = inventory.getItem(data.getSlot());
                                 if (i == null) continue;
 
-                                item.applyDataToItemStack(data, i, viewer);
+                                ItemStack updated = item.applyDataToItemStack(data, i, viewer);
+                                if (updated != i) {
+                                    inventory.setItem(data.getSlot(), updated);
+                                }
                             }
                         });
                     });
