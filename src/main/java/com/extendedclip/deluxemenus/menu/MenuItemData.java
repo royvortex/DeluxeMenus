@@ -1,5 +1,7 @@
 package com.extendedclip.deluxemenus.menu;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -7,128 +9,147 @@ import org.bukkit.Color;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemRarity;
 import org.bukkit.inventory.meta.trim.TrimMaterial;
 import org.bukkit.inventory.meta.trim.TrimPattern;
 import org.bukkit.potion.PotionEffect;
+import org.jetbrains.annotations.NotNull;
 
 /**
- * A pure data representation of a menu item, containing all precomputed values
- * (placeholders resolved, requirements checked) but no Bukkit ItemStack objects.
+ * A wrapper around a {@link StaticItemData} (the cacheable, config-derived
+ * part) and a {@link DynamicItemData} (the resolved, per-render part).
+ *
+ * The 27 getters are preserved for backwards compatibility with the rest of
+ * the codebase: static fields delegate to the static object, dynamic fields
+ * to the dynamic object, and a few (material, amount, nbtTags) merge the two
+ * so callers see the same shape they always did.
+ *
+ * Render code can either use the wrapper getters (unchanged) or call
+ * {@link #getStaticData()} / {@link #getDynamicData()} to work with the split
+ * parts directly (e.g. to refresh only the dynamic side via
+ * {@link MenuItem#refreshDynamic}).
  */
 public class MenuItemData {
-    private final int slot;
-    private final int priority;
-    private final Material material;
-    private final int amount;
-    private final Optional<String> displayName;
-    private final List<String> lore;
-    private final Map<Enchantment, Integer> enchantments;
-    private final short damage;
-    private final Optional<Integer> customModelData;
-    private final boolean unbreakable;
-    private final List<ItemFlag> itemFlags;
-    private final Optional<Color> rgbColor;
-    private final List<PotionEffect> potionEffects;
-    private final Optional<ItemRarity> rarity;
-    private final Optional<Boolean> hideTooltip;
-    private final Optional<Boolean> enchantmentGlintOverride;
-    private final Optional<NamespacedKey> tooltipStyle;
-    private final Optional<NamespacedKey> itemModel;
-    private final Optional<TrimMaterial> trimMaterial;
-    private final Optional<TrimPattern> trimPattern;
-    private final Optional<Integer> lightLevel;
-    private final Map<String, Object> nbtTags;
-    private final Optional<String> hookName;
-    private final Optional<String> hookArgs;
-    private final Optional<String> base64Data;
-    private final boolean isPlayerItem;
-    private final boolean isWaterBottle;
 
-    public MenuItemData(
-            int slot,
-            int priority,
-            Material material,
-            int amount,
-            Optional<String> displayName,
-            List<String> lore,
-            Map<Enchantment, Integer> enchantments,
-            short damage,
-            Optional<Integer> customModelData,
-            boolean unbreakable,
-            List<ItemFlag> itemFlags,
-            Optional<Color> rgbColor,
-            List<PotionEffect> potionEffects,
-            Optional<ItemRarity> rarity,
-            Optional<Boolean> hideTooltip,
-            Optional<Boolean> enchantmentGlintOverride,
-            Optional<NamespacedKey> tooltipStyle,
-            Optional<NamespacedKey> itemModel,
-            Optional<TrimMaterial> trimMaterial,
-            Optional<TrimPattern> trimPattern,
-            Optional<Integer> lightLevel,
-            Map<String, Object> nbtTags,
-            Optional<String> hookName,
-            Optional<String> hookArgs,
-            Optional<String> base64Data,
-            boolean isPlayerItem,
-            boolean isWaterBottle
-    ) {
-        this.slot = slot;
-        this.priority = priority;
-        this.material = material;
-        this.amount = amount;
-        this.displayName = displayName;
-        this.lore = lore;
-        this.enchantments = enchantments;
-        this.damage = damage;
-        this.customModelData = customModelData;
-        this.unbreakable = unbreakable;
-        this.itemFlags = itemFlags;
-        this.rgbColor = rgbColor;
-        this.potionEffects = potionEffects;
-        this.rarity = rarity;
-        this.hideTooltip = hideTooltip;
-        this.enchantmentGlintOverride = enchantmentGlintOverride;
-        this.tooltipStyle = tooltipStyle;
-        this.itemModel = itemModel;
-        this.trimMaterial = trimMaterial;
-        this.trimPattern = trimPattern;
-        this.lightLevel = lightLevel;
-        this.nbtTags = nbtTags;
-        this.hookName = hookName;
-        this.hookArgs = hookArgs;
-        this.base64Data = base64Data;
-        this.isPlayerItem = isPlayerItem;
-        this.isWaterBottle = isWaterBottle;
+    private final StaticItemData staticData;
+    private final DynamicItemData dynamicData;
+
+    public MenuItemData(final @NotNull StaticItemData staticData,
+                        final @NotNull DynamicItemData dynamicData) {
+        this.staticData = staticData;
+        this.dynamicData = dynamicData;
     }
 
-    public int getSlot() { return slot; }
-    public int getPriority() { return priority; }
-    public Material getMaterial() { return material; }
-    public int getAmount() { return amount; }
-    public Optional<String> getDisplayName() { return displayName; }
-    public List<String> getLore() { return lore; }
-    public Map<Enchantment, Integer> getEnchantments() { return enchantments; }
-    public short getDamage() { return damage; }
-    public Optional<Integer> getCustomModelData() { return customModelData; }
-    public boolean isUnbreakable() { return unbreakable; }
-    public List<ItemFlag> getItemFlags() { return itemFlags; }
-    public Optional<Color> getRgbColor() { return rgbColor; }
-    public List<PotionEffect> getPotionEffects() { return potionEffects; }
-    public Optional<ItemRarity> getRarity() { return rarity; }
-    public Optional<Boolean> getHideTooltip() { return hideTooltip; }
-    public Optional<Boolean> getEnchantmentGlintOverride() { return enchantmentGlintOverride; }
-    public Optional<NamespacedKey> getTooltipStyle() { return tooltipStyle; }
-    public Optional<NamespacedKey> getItemModel() { return itemModel; }
-    public Optional<TrimMaterial> getTrimMaterial() { return trimMaterial; }
-    public Optional<TrimPattern> getTrimPattern() { return trimPattern; }
-    public Optional<Integer> getLightLevel() { return lightLevel; }
-    public Map<String, Object> getNbtTags() { return nbtTags; }
-    public Optional<String> getHookName() { return hookName; }
-    public Optional<String> getHookArgs() { return hookArgs; }
-    public Optional<String> getBase64Data() { return base64Data; }
-    public boolean isPlayerItem() { return isPlayerItem; }
-    public boolean isWaterBottle() { return isWaterBottle; }
+    public StaticItemData getStaticData() {
+        return staticData;
+    }
+
+    public DynamicItemData getDynamicData() {
+        return dynamicData;
+    }
+
+    public int getSlot() { return staticData.getSlot(); }
+    public int getPriority() { return staticData.getPriority(); }
+
+    public Material getMaterial() {
+        return dynamicData.getMaterial().orElseGet(staticData::getMaterial);
+    }
+
+    public int getAmount() {
+        return dynamicData.getAmount().orElseGet(staticData::getAmount);
+    }
+
+    public Optional<String> getDisplayName() {
+        return dynamicData.getDisplayName();
+    }
+
+    public List<String> getLore() {
+        return dynamicData.getLore();
+    }
+
+    public Map<Enchantment, Integer> getEnchantments() {
+        return staticData.getEnchantments();
+    }
+
+    public short getDamage() {
+        return dynamicData.getDamage();
+    }
+
+    public Optional<Integer> getCustomModelData() {
+        return dynamicData.getCustomModelData();
+    }
+
+    public boolean isUnbreakable() {
+        return staticData.isUnbreakable();
+    }
+
+    public List<ItemFlag> getItemFlags() {
+        return staticData.getItemFlags();
+    }
+
+    public Optional<Color> getRgbColor() {
+        return dynamicData.getRgbColor();
+    }
+
+    public List<PotionEffect> getPotionEffects() {
+        return staticData.getPotionEffects();
+    }
+
+    public Optional<ItemRarity> getRarity() {
+        return dynamicData.getRarity();
+    }
+
+    public Optional<Boolean> getHideTooltip() {
+        return dynamicData.getHideTooltip();
+    }
+
+    public Optional<Boolean> getEnchantmentGlintOverride() {
+        return dynamicData.getEnchantmentGlintOverride();
+    }
+
+    public Optional<NamespacedKey> getTooltipStyle() {
+        return dynamicData.getTooltipStyle();
+    }
+
+    public Optional<NamespacedKey> getItemModel() {
+        return dynamicData.getItemModel();
+    }
+
+    public Optional<TrimMaterial> getTrimMaterial() {
+        return dynamicData.getTrimMaterial();
+    }
+
+    public Optional<TrimPattern> getTrimPattern() {
+        return dynamicData.getTrimPattern();
+    }
+
+    public Optional<Integer> getLightLevel() {
+        return dynamicData.getLightLevel();
+    }
+
+    public Map<String, Object> getNbtTags() {
+        return dynamicData.getNbtTagValues().isEmpty() ? Collections.emptyMap() : new HashMap<>(dynamicData.getNbtTagValues());
+    }
+
+    public Optional<String> getHookName() {
+        return staticData.getHookName();
+    }
+
+    public Optional<String> getHookArgs() {
+        return dynamicData.getHookArgs();
+    }
+
+    public Optional<String> getBase64Data() {
+        return staticData.getBase64Data();
+    }
+
+    public boolean isPlayerItem() {
+        return staticData.isPlayerItem();
+    }
+
+    public boolean isWaterBottle() {
+        return staticData.isWaterBottle();
+    }
 }

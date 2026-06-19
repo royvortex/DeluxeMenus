@@ -48,6 +48,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -93,211 +95,263 @@ public class MenuItem {
         }
     }
 
+    /**
+     * Compute (or fetch from cache) a {@link MenuItemData} for the given holder.
+     *
+     * The static side is cached; the dynamic side is always resolved fresh
+     * against the current holder, so placeholders reflect the latest state on
+     * every call. This is what fixes the prior bug where
+     * {@code updatePlaceholders: true} items silently kept stale values when
+     * caching was on.
+     */
     public MenuItemData computeData(@NotNull final MenuHolder holder) {
-        final UUID cacheUuid = this.options.shared() ? null : holder.getViewer().getUniqueId();
+        final StaticItemData staticData = getOrComputeStatic(holder);
+        final DynamicItemData dynamicData = resolveDynamic(holder, staticData);
+        return new MenuItemData(staticData, dynamicData);
+    }
+
+    /**
+     * Re-resolve only the dynamic side of a previously computed
+     * {@link MenuItemData}, returning a new MenuItemData with the same static
+     * side. Use this on the render path to keep placeholders fresh while
+     * reusing the cached static.
+     */
+    public MenuItemData refreshDynamic(@NotNull final MenuHolder holder, @NotNull final MenuItemData template) {
+        final StaticItemData staticData = template.getStaticData();
+        final DynamicItemData dynamicData = resolveDynamic(holder, staticData);
+        return new MenuItemData(staticData, dynamicData);
+    }
+
+    private StaticItemData getOrComputeStatic(@NotNull final MenuHolder holder) {
         if (this.options.caching()) {
-            MenuItemData cached = plugin.getMenuCache().getItem(
+            final UUID cacheUuid = this.options.shared() ? null : holder.getViewer().getUniqueId();
+            final StaticItemData cached = plugin.getMenuCache().getItemStatic(
                     cacheUuid,
                     holder.getMenuName(),
                     this.configKey,
                     holder.getTypedArgs()
             );
             if (cached != null) return cached;
+            final StaticItemData computed = computeStatic(holder);
+            plugin.getMenuCache().putItemStatic(
+                    cacheUuid,
+                    holder.getMenuName(),
+                    this.configKey,
+                    holder.getTypedArgs(),
+                    computed
+            );
+            return computed;
+        }
+        return computeStatic(holder);
+    }
+
+    private StaticItemData computeStatic(@NotNull final MenuHolder holder) {
+        final String stringMaterial = this.options.material();
+        final String lowercaseStringMaterial = stringMaterial.toLowerCase(Locale.ROOT);
+
+        final boolean isDynamicMaterial = ItemUtils.isPlaceholderOption(lowercaseStringMaterial)
+                || ItemUtils.isItemStackOption(lowercaseStringMaterial)
+                || ItemUtils.isPlayerItem(lowercaseStringMaterial)
+                || isHeadItem(lowercaseStringMaterial)
+                || matchesHookPrefix(lowercaseStringMaterial);
+
+        final Optional<Material> staticMaterial;
+        final Optional<String> materialTemplate;
+        if (isDynamicMaterial) {
+            staticMaterial = Optional.empty();
+            materialTemplate = Optional.of(stringMaterial);
+        } else {
+            final Material resolved = Material.getMaterial(stringMaterial.toUpperCase(Locale.ROOT));
+            staticMaterial = Optional.of(resolved != null ? resolved : Material.STONE);
+            materialTemplate = Optional.empty();
         }
 
-        final Player viewer = holder.getViewer();
+        final boolean isWaterBottle = ItemUtils.isWaterBottle(lowercaseStringMaterial);
+        final boolean isPlayerItem = ItemUtils.isPlayerItem(lowercaseStringMaterial);
 
-        String hookName = null;
-        String hookArgs = null;
-        String base64Data = null;
-        boolean isPlayerItem = false;
-        boolean isWaterBottle = false;
-        Material material = null;
-        int amount = 1;
-
-        String stringMaterial = this.options.material();
-        String lowercaseStringMaterial = stringMaterial.toLowerCase(Locale.ROOT);
-
-        if (ItemUtils.isPlaceholderOption(lowercaseStringMaterial)) {
-            stringMaterial = holder.setPlaceholdersAndArguments(stringMaterial.substring(PLACEHOLDER_PREFIX.length()));
-            lowercaseStringMaterial = stringMaterial.toLowerCase(Locale.ENGLISH);
-        }
-        if (ItemUtils.isItemStackOption(lowercaseStringMaterial)) {
-            stringMaterial = holder.setPlaceholdersAndArguments(stringMaterial.substring(STACK_PREFIX.length()));
-            base64Data = stringMaterial;
-            ItemStack base64Item = base64ToItemStack(stringMaterial);
-            if (base64Item != null) {
-                amount = base64Item.getAmount();
-                material = base64Item.getType();
-            }
-        }
-
-        if (ItemUtils.isPlayerItem(lowercaseStringMaterial)) {
-            isPlayerItem = true;
-            final ItemStack playerItem = INVENTORY_ITEM_ACCESSORS.get(lowercaseStringMaterial).apply(viewer.getInventory());
-            if (playerItem != null) {
-                material = playerItem.getType();
-                amount = playerItem.getAmount();
-            } else {
-                material = Material.AIR;
-            }
-        }
-
-        final String finalMaterial = lowercaseStringMaterial;
-        final ItemHook pluginHook = plugin.getItemHooks().values()
+        final ItemHook pluginHook = !isDynamicMaterial ? null : plugin.getItemHooks().values()
                 .stream()
-                .filter(x -> finalMaterial.startsWith(x.getPrefix()))
+                .filter(x -> lowercaseStringMaterial.startsWith(x.getPrefix()))
                 .findFirst()
                 .orElse(null);
 
-        if (pluginHook != null) {
-            hookName = pluginHook.getPrefix();
-            hookArgs = holder.setPlaceholdersAndArguments(stringMaterial.substring(pluginHook.getPrefix().length()));
+        final Optional<String> hookName = Optional.ofNullable(pluginHook).map(ItemHook::getPrefix);
+        final Optional<String> base64Data = ItemUtils.isItemStackOption(lowercaseStringMaterial)
+                ? Optional.of(stringMaterial)
+                : Optional.empty();
+
+        final int staticAmount;
+        final Optional<String> amountTemplate;
+        if (this.options.dynamicAmount().isPresent()) {
+            staticAmount = -1;
+            amountTemplate = this.options.dynamicAmount();
+        } else {
+            staticAmount = this.options.amount();
+            amountTemplate = Optional.empty();
         }
 
-        if (ItemUtils.isWaterBottle(stringMaterial)) {
-            isWaterBottle = true;
-        }
+        return new StaticItemData(
+                this.options.slot(),
+                this.options.priority(),
+                staticMaterial.orElse(null),
+                staticAmount,
+                this.options.enchantments(),
+                new ArrayList<>(this.options.itemFlags()),
+                this.options.unbreakable(),
+                new ArrayList<>(this.options.potionEffects()),
+                isPlayerItem,
+                isWaterBottle,
+                combineNbtTemplates(this.options.nbtString(), this.options.nbtStrings()),
+                combineNbtTemplates(this.options.nbtByte(), this.options.nbtBytes()),
+                combineNbtTemplates(this.options.nbtShort(), this.options.nbtShorts()),
+                combineNbtTemplates(this.options.nbtInt(), this.options.nbtInts()),
+                hookName,
+                base64Data,
+                materialTemplate,
+                amountTemplate,
+                this.options.displayName(),
+                this.options.lore(),
+                this.options.customModelData(),
+                this.options.rgb(),
+                this.options.rarity(),
+                this.options.hideTooltip(),
+                this.options.enchantmentGlintOverride(),
+                this.options.tooltipStyle(),
+                this.options.itemModel(),
+                this.options.trimMaterial(),
+                this.options.trimPattern(),
+                this.options.lightLevel(),
+                this.options.damage(),
+                pluginHook != null ? Optional.of(stringMaterial.substring(pluginHook.getPrefix().length())) : Optional.empty()
+        );
+    }
 
-        if (material == null && !isWaterBottle && hookName == null) {
-            material = Material.getMaterial(stringMaterial.toUpperCase(Locale.ROOT));
-            if (material == null) {
-                material = Material.STONE;
+    private DynamicItemData resolveDynamic(@NotNull final MenuHolder holder, @NotNull final StaticItemData s) {
+        final Player viewer = holder.getViewer();
+        final String stringMaterial = this.options.material();
+        final String lowercaseStringMaterial = stringMaterial.toLowerCase(Locale.ROOT);
+
+        // Material resolution
+        Optional<Material> material = Optional.empty();
+        String hookArgs = null;
+        if (s.getMaterialTemplate().isPresent()) {
+            String resolved = s.getMaterialTemplate().get();
+            final String initialLower = resolved.toLowerCase(Locale.ROOT);
+            if (ItemUtils.isPlaceholderOption(initialLower)) {
+                resolved = holder.setPlaceholdersAndArguments(resolved.substring(PLACEHOLDER_PREFIX.length()));
+            }
+            final String lower = resolved.toLowerCase(Locale.ROOT);
+            if (ItemUtils.isItemStackOption(lower)) {
+                resolved = holder.setPlaceholdersAndArguments(resolved.substring(STACK_PREFIX.length()));
+                final ItemStack base64Item = base64ToItemStack(resolved);
+                if (base64Item != null) {
+                    material = Optional.of(base64Item.getType());
+                }
+            } else if (ItemUtils.isPlayerItem(lower)) {
+                final ItemStack playerItem = INVENTORY_ITEM_ACCESSORS.get(lower).apply(viewer.getInventory());
+                if (playerItem != null) {
+                    material = Optional.of(playerItem.getType());
+                } else {
+                    material = Optional.of(Material.AIR);
+                }
+            } else {
+                final ItemHook pluginHook = plugin.getItemHooks().values()
+                        .stream()
+                        .filter(x -> lower.startsWith(x.getPrefix()))
+                        .findFirst()
+                        .orElse(null);
+                if (pluginHook != null) {
+                    hookArgs = holder.setPlaceholdersAndArguments(resolved.substring(pluginHook.getPrefix().length()));
+                } else if (!ItemUtils.isWaterBottle(lower)) {
+                    final Material mat = Material.getMaterial(resolved.toUpperCase(Locale.ROOT));
+                    if (mat != null) {
+                        material = Optional.of(mat);
+                    }
+                }
             }
         }
 
-        if (this.options.amount() != -1) {
-            amount = this.options.amount();
-        }
-
-        if (this.options.dynamicAmount().isPresent()) {
+        // Amount
+        Optional<Integer> amount = Optional.empty();
+        if (s.getAmountTemplate().isPresent()) {
             try {
-                final int dynamicAmount = (int) Double.parseDouble(holder.setPlaceholdersAndArguments(this.options.dynamicAmount().get()));
-                amount = Math.max(dynamicAmount, 1);
+                amount = Optional.of(Math.max((int) Double.parseDouble(holder.setPlaceholdersAndArguments(s.getAmountTemplate().get())), 1));
             } catch (final NumberFormatException ignored) {
             }
         }
 
-        Optional<String> displayName = this.options.displayName().map(holder::setPlaceholdersAndArguments);
-        List<String> lore = getMenuItemLore(holder, this.options.lore());
+        // Display name
+        final Optional<String> displayName = s.getDisplayNameTemplate().map(holder::setPlaceholdersAndArguments);
 
+        // Lore
+        final List<String> lore = s.getLoreTemplates().isEmpty()
+                ? Collections.emptyList()
+                : getMenuItemLore(holder, s.getLoreTemplates());
+
+        // Custom model data
         Optional<Integer> customModelData = Optional.empty();
-        if (VersionHelper.IS_CUSTOM_MODEL_DATA && this.options.customModelData().isPresent()) {
+        if (VersionHelper.IS_CUSTOM_MODEL_DATA && s.getCustomModelDataTemplate().isPresent()) {
             try {
-                customModelData = Optional.of(Integer.parseInt(holder.setPlaceholdersAndArguments(this.options.customModelData().get())));
-            } catch (final Exception ignored) {}
+                customModelData = Optional.of(Integer.parseInt(holder.setPlaceholdersAndArguments(s.getCustomModelDataTemplate().get())));
+            } catch (final Exception ignored) {
+            }
         }
 
-        Optional<Color> rgbColor = this.options.rgb().map(holder::setPlaceholdersAndArguments).map(this::parseRGBColor);
-        
+        // RGB
+        final Optional<Color> rgbColor = s.getRgbTemplate().map(holder::setPlaceholdersAndArguments).map(this::parseRGBColor);
+
+        // Rarity
         Optional<ItemRarity> rarity = Optional.empty();
-        if (VersionHelper.HAS_DATA_COMPONENTS && this.options.rarity().isPresent()) {
-            String r = holder.setPlaceholdersAndArguments(this.options.rarity().get());
+        if (VersionHelper.HAS_DATA_COMPONENTS && s.getRarityTemplate().isPresent()) {
+            final String r = holder.setPlaceholdersAndArguments(s.getRarityTemplate().get());
             try {
                 rarity = Optional.of(ItemRarity.valueOf(r.toUpperCase()));
-            } catch (IllegalArgumentException ignored) {}
+            } catch (IllegalArgumentException ignored) {
+            }
         }
 
-        Optional<Boolean> hideTooltip = this.options.hideTooltip().map(holder::setPlaceholdersAndArguments).map(Boolean::parseBoolean);
-        Optional<Boolean> enchantmentGlintOverride = this.options.enchantmentGlintOverride().map(holder::setPlaceholdersAndArguments).map(Boolean::parseBoolean);
-        Optional<NamespacedKey> tooltipStyle = this.options.tooltipStyle().map(holder::setPlaceholdersAndArguments).map(NamespacedKey::fromString);
-        Optional<NamespacedKey> itemModel = this.options.itemModel().map(holder::setPlaceholdersAndArguments).map(NamespacedKey::fromString);
+        final Optional<Boolean> hideTooltip = s.getHideTooltipTemplate().map(holder::setPlaceholdersAndArguments).map(Boolean::parseBoolean);
+        final Optional<Boolean> enchantmentGlintOverride = s.getEnchantmentGlintOverrideTemplate().map(holder::setPlaceholdersAndArguments).map(Boolean::parseBoolean);
+        final Optional<NamespacedKey> tooltipStyle = s.getTooltipStyleTemplate().map(holder::setPlaceholdersAndArguments).map(NamespacedKey::fromString);
+        final Optional<NamespacedKey> itemModel = s.getItemModelTemplate().map(holder::setPlaceholdersAndArguments).map(NamespacedKey::fromString);
 
         Optional<TrimMaterial> trimMaterial = Optional.empty();
         Optional<TrimPattern> trimPattern = Optional.empty();
         if (VersionHelper.HAS_ARMOR_TRIMS) {
-            trimMaterial = this.options.trimMaterial().map(holder::setPlaceholdersAndArguments).map(Registry.TRIM_MATERIAL::match);
-            trimPattern = this.options.trimPattern().map(holder::setPlaceholdersAndArguments).map(Registry.TRIM_PATTERN::match);
+            trimMaterial = s.getTrimMaterialTemplate().map(holder::setPlaceholdersAndArguments).map(Registry.TRIM_MATERIAL::match);
+            trimPattern = s.getTrimPatternTemplate().map(holder::setPlaceholdersAndArguments).map(Registry.TRIM_PATTERN::match);
         }
 
         Optional<Integer> lightLevel = Optional.empty();
-        if (this.options.lightLevel().isPresent()) {
+        if (s.getLightLevelTemplate().isPresent()) {
             try {
-                lightLevel = Optional.of(Integer.parseInt(holder.setPlaceholdersAndArguments(this.options.lightLevel().get())));
-            } catch (Exception ignored) {}
+                lightLevel = Optional.of(Integer.parseInt(holder.setPlaceholdersAndArguments(s.getLightLevelTemplate().get())));
+            } catch (Exception ignored) {
+            }
         }
 
         short damage = 0;
-        if (this.options.damage().isPresent()) {
+        if (s.getDamageTemplate().isPresent()) {
             try {
-                damage = (short) Integer.parseInt(holder.setPlaceholdersAndArguments(this.options.damage().get()));
-            } catch (NumberFormatException ignored) {}
-        }
-
-        // NBT Data resolution
-        Map<String, Object> nbtTags = new java.util.HashMap<>();
-        this.options.nbtString().ifPresent(s -> {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) nbtTags.put("s:" + parts[0], holder.setPlaceholdersAndArguments(parts[1]));
-        });
-        this.options.nbtByte().ifPresent(s -> {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("b:" + parts[0], Byte.parseByte(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
-            }
-        });
-        this.options.nbtShort().ifPresent(s -> {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("sh:" + parts[0], Short.parseShort(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
-            }
-        });
-        this.options.nbtInt().ifPresent(s -> {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("i:" + parts[0], Integer.parseInt(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
-            }
-        });
-
-        for (String s : this.options.nbtStrings()) {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) nbtTags.put("s:" + parts[0], holder.setPlaceholdersAndArguments(parts[1]));
-        }
-        for (String s : this.options.nbtBytes()) {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("b:" + parts[0], Byte.parseByte(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        for (String s : this.options.nbtShorts()) {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("sh:" + parts[0], Short.parseShort(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
-            }
-        }
-        for (String s : this.options.nbtInts()) {
-            String[] parts = s.split(":", 2);
-            if (parts.length == 2) {
-                try {
-                    nbtTags.put("i:" + parts[0], Integer.parseInt(holder.setPlaceholdersAndArguments(parts[1])));
-                } catch (NumberFormatException ignored) {}
+                damage = (short) Integer.parseInt(holder.setPlaceholdersAndArguments(s.getDamageTemplate().get()));
+            } catch (NumberFormatException ignored) {
             }
         }
 
-        MenuItemData data = new MenuItemData(
-                this.options.slot(),
-                this.options.priority(),
-                material != null ? material : Material.STONE,
+        // NBT
+        final Map<String, Object> nbtTags = new HashMap<>();
+        nbtTags.putAll(resolveNbtStrings(holder, s.getNbtStringTemplates(), "s:"));
+        nbtTags.putAll(resolveNbtBytes(holder, s.getNbtByteTemplates(), "b:"));
+        nbtTags.putAll(resolveNbtShorts(holder, s.getNbtShortTemplates(), "sh:"));
+        nbtTags.putAll(resolveNbtInts(holder, s.getNbtIntTemplates(), "i:"));
+
+        return new DynamicItemData(
+                material,
                 amount,
                 displayName,
                 lore,
-                this.options.enchantments(),
-                damage,
                 customModelData,
-                this.options.unbreakable(),
-                new ArrayList<>(this.options.itemFlags()),
                 rgbColor,
-                new ArrayList<>(this.options.potionEffects()),
                 rarity,
                 hideTooltip,
                 enchantmentGlintOverride,
@@ -306,25 +360,80 @@ public class MenuItem {
                 trimMaterial,
                 trimPattern,
                 lightLevel,
-                nbtTags,
-                Optional.ofNullable(hookName),
+                damage,
                 Optional.ofNullable(hookArgs),
-                Optional.ofNullable(base64Data),
-                isPlayerItem,
-                isWaterBottle
+                nbtTags
         );
+    }
 
-        if (this.options.caching()) {
-            plugin.getMenuCache().putItem(
-                    cacheUuid,
-                    holder.getMenuName(),
-                    this.configKey,
-                    holder.getTypedArgs(),
-                    data
-            );
+    private Map<String, Object> resolveNbtStrings(@NotNull final MenuHolder holder, @NotNull final List<String> templates, final String prefix) {
+        final Map<String, Object> result = new HashMap<>();
+        for (final String t : templates) {
+            final String[] parts = t.split(":", 2);
+            if (parts.length == 2) {
+                result.put(prefix + parts[0], holder.setPlaceholdersAndArguments(parts[1]));
+            }
         }
+        return result;
+    }
 
-        return data;
+    private Map<String, Object> resolveNbtBytes(@NotNull final MenuHolder holder, @NotNull final List<String> templates, final String prefix) {
+        final Map<String, Object> result = new HashMap<>();
+        for (final String t : templates) {
+            final String[] parts = t.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    result.put(prefix + parts[0], Byte.parseByte(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Object> resolveNbtShorts(@NotNull final MenuHolder holder, @NotNull final List<String> templates, final String prefix) {
+        final Map<String, Object> result = new HashMap<>();
+        for (final String t : templates) {
+            final String[] parts = t.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    result.put(prefix + parts[0], Short.parseShort(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Object> resolveNbtInts(@NotNull final MenuHolder holder, @NotNull final List<String> templates, final String prefix) {
+        final Map<String, Object> result = new HashMap<>();
+        for (final String t : templates) {
+            final String[] parts = t.split(":", 2);
+            if (parts.length == 2) {
+                try {
+                    result.put(prefix + parts[0], Integer.parseInt(holder.setPlaceholdersAndArguments(parts[1])));
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return result;
+    }
+
+    private static List<String> nbtListOrEmpty(@NotNull final Optional<String> single) {
+        return single.isPresent() ? List.of(single.get()) : Collections.emptyList();
+    }
+
+    private static List<String> combineNbtTemplates(@NotNull final Optional<String> single, @NotNull final List<String> list) {
+        if (single.isEmpty()) return list;
+        if (list.isEmpty()) return List.of(single.get());
+        final List<String> result = new ArrayList<>(list.size() + 1);
+        result.addAll(list);
+        result.add(single.get());
+        return result;
+    }
+
+    private boolean matchesHookPrefix(@NotNull final String lowerMaterial) {
+        return plugin.getItemHooks().values().stream().anyMatch(x -> lowerMaterial.startsWith(x.getPrefix()));
     }
 
     public ItemStack applyDataToItemStack(@NotNull final MenuItemData data, @NotNull final ItemStack itemStack, @NotNull final Player viewer) {
@@ -349,7 +458,7 @@ public class MenuItem {
             for (Map.Entry<String, Object> entry : data.getNbtTags().entrySet()) {
                 String keyWithType = entry.getKey();
                 Object value = entry.getValue();
-                
+
                 if (keyWithType.startsWith("s:")) {
                     result = NbtProvider.setString(result, keyWithType.substring(2), (String) value);
                 } else if (keyWithType.startsWith("b:")) {
@@ -446,7 +555,7 @@ public class MenuItem {
         List<String> itemLore = Objects.requireNonNullElse(itemMeta.getLore(), new ArrayList<>());
         LoreAppendMode mode = this.options.loreAppendMode().orElse(LoreAppendMode.OVERRIDE);
         if (!this.options.hasLore() && this.options.loreAppendMode().isEmpty()) mode = LoreAppendMode.IGNORE;
-        
+
         switch (mode) {
             case IGNORE: finalLore.addAll(itemLore); break;
             case TOP: finalLore.addAll(data.getLore()); finalLore.addAll(itemLore); break;
@@ -511,7 +620,7 @@ public class MenuItem {
             for (Map.Entry<String, Object> entry : data.getNbtTags().entrySet()) {
                 String keyWithType = entry.getKey();
                 Object value = entry.getValue();
-                
+
                 if (keyWithType.startsWith("s:")) {
                     itemStack = NbtProvider.setString(itemStack, keyWithType.substring(2), (String) value);
                 } else if (keyWithType.startsWith("b:")) {
@@ -538,7 +647,7 @@ public class MenuItem {
      * <ul>
      * <li>"head-{player-name}" (a simple named player head, supports placeholders. eg. "head-%player_name% or head-extendedclip")</li>
      * <li>"texture-{texture-url}" (a head with a custom texture specified by a texture url. eg. "texture-93a728ad8d31486a7f9aad200edb373ea803d1fc5fd4321b2e2a971348234443")</li>
-     * <li>"basehead-{base64-encoded-texture-url}" (a head with a custom texture specified by a base64 encoded texture url)</li>
+     * <li>"basehead-{base64-encoded-texture-url}" (a head with a base64 encoded texture url)</li>
      * <li>"hdb-{hdb-head-id}" (a head with a custom texture specified by a <a href="https://www.spigotmc.org/resources/14280/">HeadDatabase</a> id)</li>
      * </ul>
      *

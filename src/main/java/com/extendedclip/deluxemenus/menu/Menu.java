@@ -404,13 +404,16 @@ public class Menu {
         inventory.clear();
 
         final Player viewer = holder.getViewer();
-        for (MenuItemData data : snapshot.getItems()) {
-            MenuItem item = items.get(data.getSlot()).get(data.getPriority());
-            ItemStack iStack = item.getItemStack(data, viewer);
+        for (MenuItemData template : snapshot.getItems()) {
+            MenuItem item = items.get(template.getSlot()).get(template.getPriority());
+            // Re-resolve dynamic fields against the current holder so placeholders
+            // reflect the latest state, even if the snapshot was served from cache.
+            final MenuItemData fresh = item.refreshDynamic(holder, template);
+            ItemStack iStack = item.getItemStack(fresh, viewer);
 
             if (iStack != null) {
                 iStack = plugin.getMenuItemMarker().mark(iStack);
-                inventory.setItem(data.getSlot(), iStack);
+                inventory.setItem(template.getSlot(), iStack);
             }
         }
     }

@@ -1,7 +1,7 @@
 package com.extendedclip.deluxemenus.cache;
 
-import com.extendedclip.deluxemenus.menu.MenuItemData;
 import com.extendedclip.deluxemenus.menu.MenuSnapshot;
+import com.extendedclip.deluxemenus.menu.StaticItemData;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
 import java.util.Map;
@@ -10,7 +10,12 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
 /**
- * A thread-safe cache for MenuSnapshot objects using Guava for LRU and TTL.
+ * A thread-safe cache for MenuSnapshot and StaticItemData using Guava for LRU and TTL.
+ *
+ * The item tier stores only the static, config-derived part of an item. The
+ * dynamic part (placeholders, etc.) is rebuilt on every render, so it never
+ * goes in the cache. This is what keeps {@code updatePlaceholders: true}
+ * items working correctly even with caching enabled.
  */
 public class MenuCache implements SimpleCache {
 
@@ -19,16 +24,16 @@ public class MenuCache implements SimpleCache {
             .expireAfterWrite(1, TimeUnit.MINUTES)
             .build();
 
-    private final Cache<ItemCacheKey, MenuItemData> itemCache = CacheBuilder.newBuilder()
+    private final Cache<ItemCacheKey, StaticItemData> itemCache = CacheBuilder.newBuilder()
             .maximumSize(20000) // Individual items take less memory, can cache more
             .expireAfterWrite(1, TimeUnit.MINUTES)
             .build();
 
-    public void putItem(UUID playerUuid, String menuName, String itemKey, Map<String, String> args, MenuItemData data) {
+    public void putItemStatic(UUID playerUuid, String menuName, String itemKey, Map<String, String> args, StaticItemData data) {
         itemCache.put(new ItemCacheKey(playerUuid, menuName, itemKey, args), data);
     }
 
-    public MenuItemData getItem(UUID playerUuid, String menuName, String itemKey, Map<String, String> args) {
+    public StaticItemData getItemStatic(UUID playerUuid, String menuName, String itemKey, Map<String, String> args) {
         return itemCache.getIfPresent(new ItemCacheKey(playerUuid, menuName, itemKey, args));
     }
 
