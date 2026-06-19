@@ -50,6 +50,12 @@ dependencies {
     implementation(libs.bstats)
 
     compileOnly("org.jetbrains:annotations:23.0.0")
+
+    testCompileOnly(libs.spigot)
+    testRuntimeOnly(libs.spigot)
+
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.2")
 }
 
 tasks {
@@ -70,5 +76,8 @@ tasks {
         filesMatching("plugin.yml") {
             expand("version" to rootProject.version)
         }
+    }
+    test {
+        useJUnitPlatform()
     }
 }
