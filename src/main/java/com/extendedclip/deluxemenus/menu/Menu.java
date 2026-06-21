@@ -289,6 +289,7 @@ public class Menu {
         }
 
         final MenuHolder holder = new MenuHolder(plugin, viewer);
+        holder.setMenuName(this.options.name());
         if (placeholderPlayer != null) {
             holder.setPlaceholderPlayer(placeholderPlayer);
         }
