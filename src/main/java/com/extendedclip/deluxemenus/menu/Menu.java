@@ -381,6 +381,16 @@ public class Menu {
 
         renderSnapshotToInventory(holder, snapshot, inventory);
 
+        // Populate the holder's activeItems so PlayerListener.onClick can resolve
+        // a clicked slot back to the MenuItem that owns it. Lost during the
+        // static/dynamic refactor; MenuHolder.refreshMenu still does this, but the
+        // menu-open path was missing it.
+        final Set<MenuItem> active = new HashSet<>();
+        for (MenuItemData data : snapshot.getItems()) {
+            active.add(items.get(data.getSlot()).get(data.getPriority()));
+        }
+        holder.setActiveItems(active);
+
         if (options.refresh()) {
             holder.startRefreshTask();
         }
