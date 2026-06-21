@@ -277,6 +277,16 @@ public class Menu {
     }
 
     public void openMenu(final @NotNull Player viewer, final @Nullable Map<String, String> args, final @Nullable Player placeholderPlayer) {
+        // On Folia, Bukkit.createInventory (called inside renderSnapshot) requires
+        // the entity's region thread. Click actions run on the global region
+        // scheduler, so without this guard openMenu would crash with "Cannot init
+        // menu async" when a click command reopens a menu. On Paper/Bukkit,
+        // isEntityThread returns isPrimaryThread, which is also correct.
+        if (!scheduler.isEntityThread(viewer)) {
+            scheduler.runTask(viewer, () -> openMenu(viewer, args, placeholderPlayer));
+            return;
+        }
+
         if (items == null || items.isEmpty()) {
             return;
         }
