@@ -186,7 +186,10 @@ public class MenuItem {
             staticAmount = -1;
             amountTemplate = this.options.dynamicAmount();
         } else {
-            staticAmount = this.options.amount();
+            // Default to 1 when not configured: MenuItemOptions.amount() defaults to
+            // 0 (int field default) and ItemStack's constructor requires amount > 0.
+            // An explicit amount: <n> in config still wins; only the unset case is clamped.
+            staticAmount = Math.max(1, this.options.amount());
             amountTemplate = Optional.empty();
         }
 
