@@ -377,6 +377,14 @@ public class Menu {
     }
 
     private void renderSnapshot(final @NotNull MenuHolder holder, final @NotNull MenuSnapshot snapshot, final @NotNull Player viewer, final boolean updatePlaceholders) {
+        // Belt-and-suspenders Folia guard: openMenu has one, but if any future
+        // call site forgets to guard, this catches it. Re-dispatch to the entity
+        // thread instead of crashing inside createInventory.
+        if (!scheduler.isEntityThread(viewer)) {
+            scheduler.runTask(viewer, () -> renderSnapshot(holder, snapshot, viewer, updatePlaceholders));
+            return;
+        }
+
         holder.setMenuName(this.options.name());
 
         this.options.openHandler().ifPresent(h -> h.onClick(holder));
